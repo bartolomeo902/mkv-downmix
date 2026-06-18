@@ -15,11 +15,87 @@ Utilizzo:
     python3 mkv-downmix.py . --dry-run                  # mostra comandi senza eseguire
 """
 
-import subprocess, json, os, sys, argparse, shutil, textwrap
+import subprocess, json, os, sys, argparse, shutil, textwrap, threading
 from pathlib import Path
 
 # Lingue da mantenere (sia ISO 639-1 che ISO 639-2)
 KEEP_LANGS = {'ita', 'eng', 'en', 'it'}
+
+
+def fmt_time(seconds):
+    """Formatta secondi in HH:MM:SS."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:04.1f}"
+
+
+def run_ffmpeg(cmd, total_dur):
+    """Esegue ffmpeg con barra di progresso live.
+
+    Args:
+        cmd: Lista argomenti ffmpeg
+        total_dur: Durata totale in secondi (0 = nessuna progress bar)
+
+    Returns:
+        subprocess.CompletedProcess
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    stderr_lines = []
+    last_pct = -1
+    done = threading.Event()
+
+    def reader():
+        nonlocal last_pct
+        for line in iter(proc.stderr.readline, ''):
+            stderr_lines.append(line)
+            if line.startswith('time=') and total_dur > 0:
+                raw = line[5:].strip().split()[0]
+                try:
+                    h, m, s = raw.split(':')
+                    cur = int(h) * 3600 + int(m) * 60 + float(s)
+                    pct = min(cur / total_dur * 100, 100)
+                    if int(pct) != last_pct:
+                        bar_len = 20
+                        filled = int(pct / 100 * bar_len)
+                        bar = '█' * filled + '░' * (bar_len - filled)
+                        print(
+                            f"\r    [{bar}] {pct:.0f}%  "
+                            f"({fmt_time(cur)} / {fmt_time(total_dur)})",
+                            end='', file=sys.stderr,
+                        )
+                        sys.stderr.flush()
+                        last_pct = pct
+                except (ValueError, IndexError):
+                    pass
+        done.set()
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+
+    proc.wait()
+    done.wait(timeout=3)
+
+    stderr_output = ''.join(stderr_lines)
+    print(file=sys.stderr)  # nuova riga dopo la barra
+
+    stdout_output = ''
+    if proc.stdout:
+        stdout_output = proc.stdout.read()
+        proc.stdout.close()
+
+    return subprocess.CompletedProcess(
+        args=cmd,
+        returncode=proc.returncode,
+        stdout=stdout_output,
+        stderr=stderr_output,
+    )
 
 
 # ─────────────────────────────────────────────
@@ -185,7 +261,7 @@ def build_command(input_file, output_file, video, audio, subs, upmix):
 # 3. ESECUZIONE
 # ─────────────────────────────────────────────
 
-def process_file(filepath, output_dir, upmix, dry_run):
+def process_file(filepath, output_dir, upmix, dry_run, inplace=False):
     """Elabora un singolo file MKV."""
     print(f"\n{'─'*60}")
     print(f"📦  {filepath.name}")
@@ -203,7 +279,8 @@ def process_file(filepath, output_dir, upmix, dry_run):
 
     fmt = data.get('format', {}).get('format_name', '?')
     size_gb = filepath.stat().st_size / (1024**3)
-    print(f"   Info: {fmt} | {size_gb:.1f} GB")
+    total_dur = float(data.get('format', {}).get('duration', 0))
+    print(f"   Info: {fmt} | {size_gb:.1f} GB | {fmt_time(total_dur)}")
 
     # 2. Classifica
     video, audio, subs = classify_streams(data)
@@ -219,50 +296,70 @@ def process_file(filepath, output_dir, upmix, dry_run):
         return False
 
     # 3. Prepara output
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / filepath.name
+    if inplace:
+        # ── Modalità "in-place": l'output sostituisce l'originale ──
+        backup_path = filepath.with_name(f"OLD_{filepath.name}")
+        output_file = filepath  # il nuovo file prende il nome originale
 
-    if output_file.exists() and not dry_run:
-        print(f"\n  ⚠️  Output già esistente: {output_file.name}")
-        resp = input("     Sovrascrivere? [s/N]: ").strip().lower()
-        if resp != 's':
-            print("     SKIP")
+        if backup_path.exists() and not dry_run:
+            print(f"\n  ⚠️  Backup già esistente: {backup_path.name}")
+            print("     SKIP (per evitare sovrascrittura di un backup precedente)")
             return False
 
+        input_for_ffmpeg = backup_path  # ffmpeg legge dal backup rinominato
+
+        if not dry_run:
+            print(f"\n   📦 Rinomino originale → {backup_path.name}")
+            filepath.rename(backup_path)
+        else:
+            print(f"\n   🏁 DRY RUN: rinomino {filepath.name} → {backup_path.name}")
+    else:
+        # ── Modalità standard: output separato ──
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_file = output_dir / filepath.name
+        input_for_ffmpeg = filepath
+
+        if output_file.exists() and not dry_run:
+            print(f"\n  ⚠️  Output già esistente: {output_file.name}")
+            resp = input("     Sovrascrivere? [s/N]: ").strip().lower()
+            if resp != 's':
+                print("     SKIP")
+                return False
+
     # 4. Costruisci comando
-    cmd = build_command(filepath, output_file, video, audio, subs, upmix)
+    cmd = build_command(input_for_ffmpeg, output_file, video, audio, subs, upmix)
 
     if dry_run:
-        # Mostra comando formattato
         print(f"\n   🏁 DRY RUN — comando:")
         cmd_str = ' \\\n      '.join(cmd)
         print(f"      {cmd_str}")
         return True
 
-    # 5. Esegui
+    # 5. Esegui con progress bar
     print(f"\n   ⏳ Conversione in corso...")
     sys.stdout.flush()
 
     try:
-        r = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=7200,  # max 2 ore per film
-        )
+        r = run_ffmpeg(cmd, total_dur)
 
         if r.returncode != 0:
             print(f"  ❌ ERRORE (exit code {r.returncode})")
-            # Mostra ultime righe di stderr
             err_lines = [l for l in r.stderr.split('\n') if l.strip()]
             for line in err_lines[-10:]:
                 print(f"     {line}")
+            # In inplace-mode, ripristina il backup
+            if inplace and backup_path.exists() and not output_file.exists():
+                print(f"\n   ↩️  Ripristino backup originale: {backup_path.name} → {filepath.name}")
+                backup_path.rename(filepath)
             return False
 
         print(f"  ✅ COMPLETATO → {output_file}")
 
-        # Statistiche
-        in_size = filepath.stat().st_size
+        # Statistiche: confronta col backup rinominato se inplace
+        if inplace:
+            in_size = backup_path.stat().st_size
+        else:
+            in_size = filepath.stat().st_size
         out_size = output_file.stat().st_size
         ratio = (out_size / in_size * 100) if in_size > 0 else 0
         print(f"     Dimensione: {out_size/1024/1024:.0f} MB ({ratio:.0f}% originale)")
@@ -272,12 +369,21 @@ def process_file(filepath, output_dir, upmix, dry_run):
 
     except subprocess.TimeoutExpired:
         print(f"  ❌ TIMEOUT (> 2 ore)")
+        if inplace and backup_path.exists() and not output_file.exists():
+            print(f"\n   ↩️  Ripristino backup originale: {backup_path.name} → {filepath.name}")
+            backup_path.rename(filepath)
         return False
     except KeyboardInterrupt:
         print(f"\n  ⛔ Interrotto dall'utente")
+        if inplace and backup_path.exists() and not output_file.exists():
+            print(f"\n   ↩️  Ripristino backup originale: {backup_path.name} → {filepath.name}")
+            backup_path.rename(filepath)
         return False
     except Exception as e:
         print(f"  ❌ ERRORE: {e}")
+        if inplace and backup_path.exists() and not output_file.exists():
+            print(f"\n   ↩️  Ripristino backup originale: {backup_path.name} → {filepath.name}")
+            backup_path.rename(filepath)
         return False
 
 
@@ -315,6 +421,8 @@ def main():
                         help='Mostra i comandi senza eseguirli')
     parser.add_argument('--no-verify', action='store_true',
                         help='Salta verifica prerequisiti')
+    parser.add_argument('--inplace', action='store_true',
+                        help='Rinomina originale in OLD_<nome> e salva il convertito con il nome originale')
 
     args = parser.parse_args()
 
@@ -360,25 +468,32 @@ def main():
     print(f"  File:         {len(files)}")
     print(f"  Upmix stereo: {'SÌ (surround simulato)' if args.upmix_stereo else 'NO (Z906 fa Pro Logic II)'}")
     print(f"  Dry run:      {'SÌ' if args.dry_run else 'NO'}")
+    print(f"  In-place:     {'SÌ (originale → OLD_<nome>)' if args.inplace else 'NO (output separato)'}")
     print("═" * 60)
 
     # ── Output directory ──
-    if args.output:
-        output_dir = Path(args.output).expanduser().resolve()
+    if args.inplace:
+        # Modalità in-place: output nella stessa cartella dell'input
+        output_dir = None
+        if not args.dry_run:
+            print(f"\n📂 Output: in-place (originali rinominati OLD_<nome>)")
     else:
-        if input_path.is_dir():
-            output_dir = input_path / 'Z906-ready'
+        if args.output:
+            output_dir = Path(args.output).expanduser().resolve()
         else:
-            output_dir = input_path.parent / 'Z906-ready'
+            if input_path.is_dir():
+                output_dir = input_path / 'Z906-ready'
+            else:
+                output_dir = input_path.parent / 'Z906-ready'
 
-    if not args.dry_run:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        print(f"\n📂 Output: {output_dir}")
+        if not args.dry_run:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            print(f"\n📂 Output: {output_dir}")
 
     # ── Processa ──
     ok = fail = 0
     for f in files:
-        if process_file(f, output_dir, args.upmix_stereo, args.dry_run):
+        if process_file(f, output_dir, args.upmix_stereo, args.dry_run, args.inplace):
             ok += 1
         else:
             fail += 1
@@ -389,7 +504,10 @@ def main():
     if fail > 0:
         print(f"❌ {fail} fallito(i)")
     if ok > 0 and not args.dry_run:
-        print(f"\n📂 Output: {output_dir}")
+        if args.inplace:
+            print(f"\n📂 Output: in-place (originali in OLD_<nome>)")
+        else:
+            print(f"\n📂 Output: {output_dir}")
         print(f"\n💡 Dopo la conversione:")
         print(f"   1. Collega TV → Z906 via cavo ottico (TOSLINK)")
         print(f"   2. Imposta l'uscita audio TV su \"Bitstream\" o \"Pass-through\"")

@@ -36,56 +36,76 @@ def to_mkv(path):
 
 
 def run_ffmpeg(cmd, total_dur):
-    """Esegue ffmpeg con barra di progresso live (senza threading).
+    """Esegue ffmpeg con barra di progresso live.
 
-    Legge stderr riga per riga in modo bloccante — più affidabile.
+    Legge stderr in modalità binaria e splitta su \\r (come ffmpeg usa
+    per le righe di progresso — non \\n come readline si aspetta).
     """
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
     )
 
-    stderr_lines = []
+    stderr_buf = b''
+    stderr_chunks = []
     last_pct = -1
 
-    for line in iter(proc.stderr.readline, ''):
-        stderr_lines.append(line)
-        if line.startswith('time=') and total_dur > 0:
-            raw = line[5:].strip().split()[0]
-            try:
-                h, m, s = raw.split(':')
-                cur = int(h) * 3600 + int(m) * 60 + float(s)
-                pct = min(cur / total_dur * 100, 100)
-                if int(pct) != last_pct:
-                    bar_len = 20
-                    filled = int(pct / 100 * bar_len)
-                    bar = '█' * filled + '░' * (bar_len - filled)
-                    print(
-                        f"\r    [{bar}] {pct:.0f}%  "
-                        f"({fmt_time(cur)} / {fmt_time(total_dur)})",
-                        end='', file=sys.stderr,
-                    )
-                    sys.stderr.flush()
-                    last_pct = pct
-            except (ValueError, IndexError):
-                pass
+    while True:
+        chunk = proc.stderr.read(4096)
+        if not chunk:
+            break
+        stderr_buf += chunk
 
-    # ffmpeg terminato, chiude stderr e legge stdout residuo
+        # ffmpeg separa le righe di progresso con \\r, non \\n.
+        # Splittiamo su \\r per estrarre ogni aggiornamento "time="
+        while b'\r' in stderr_buf:
+            raw_line, _, stderr_buf = stderr_buf.partition(b'\r')
+            line = raw_line.decode('utf-8', errors='replace').strip()
+            if not line:
+                continue
+            stderr_chunks.append(line)
+
+            if total_dur > 0 and 'time=' in line:
+                try:
+                    # Estrae "HH:MM:SS.xx" dopo "time="
+                    time_part = line.split('time=')[1].split()[0].strip()
+                    h, m, s = time_part.split(':')
+                    cur = int(h) * 3600 + int(m) * 60 + float(s)
+                    pct = min(cur / total_dur * 100, 100)
+                    if int(pct) != last_pct:
+                        bar_len = 20
+                        filled = int(pct / 100 * bar_len)
+                        bar = '█' * filled + '░' * (bar_len - filled)
+                        print(
+                            f"\r    [{bar}] {pct:.0f}%  "
+                            f"({fmt_time(cur)} / {fmt_time(total_dur)})",
+                            end='', file=sys.stderr,
+                        )
+                        sys.stderr.flush()
+                        last_pct = pct
+                except (ValueError, IndexError):
+                    pass
+
     proc.wait()
     print(file=sys.stderr)  # nuova riga dopo la barra
 
+    # Buffer residuo (eventuale \\n finale)
+    if stderr_buf:
+        rem = stderr_buf.decode('utf-8', errors='replace').strip()
+        if rem:
+            stderr_chunks.append(rem)
+
     stdout_output = ''
     if proc.stdout:
-        stdout_output = proc.stdout.read()
+        stdout_output = proc.stdout.read().decode('utf-8', errors='replace')
         proc.stdout.close()
 
     return subprocess.CompletedProcess(
         args=cmd,
         returncode=proc.returncode,
         stdout=stdout_output,
-        stderr=''.join(stderr_lines),
+        stderr='\n'.join(stderr_chunks),
     )
 
 

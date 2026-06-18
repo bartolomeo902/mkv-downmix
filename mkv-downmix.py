@@ -385,11 +385,11 @@ def process_file(filepath, output_dir, upmix, dry_run, inplace=False):
             backup_path.rename(filepath)
         return False
     except KeyboardInterrupt:
-        print(f"\n  ⛔ Interrotto dall'utente")
+        print(f"\n  ⛔ Interrotto dall'utente — fermo tutto")
         if inplace and backup_path.exists() and not output_file.exists():
-            print(f"\n   ↩️  Ripristino backup originale: {backup_path.name} → {filepath.name}")
+            print(f"     ↩️  Ripristino backup originale: {backup_path.name} → {filepath.name}")
             backup_path.rename(filepath)
-        return False
+        sys.exit(130)  # codice standard SIGINT
     except Exception as e:
         print(f"  ❌ ERRORE: {e}")
         if inplace and backup_path.exists() and not output_file.exists():

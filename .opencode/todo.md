@@ -1,24 +1,27 @@
-# Mission: Convertire MKV per Logitech Z906
+# Mission: Convertire MKV per Logitech Z906 — COMPLETATA
 
-## M1: Preparazione e verifica
-### T1.1: Verifica ambiente | agent:Commander | status:completed
-- [x] S1.1.1: Verificare FFmpeg installato
-- [x] S1.1.2: Verificare encoder AC3 disponibile
-- [x] S1.1.3: Verificare GitHub remote
+## Stato: ✅ Completata
+Lo script è pronto, testato e pushato su GitHub. L'utente esegue la conversione in autonomia.
 
-### T1.2: Contestualizzazione | agent:Commander | status:completed
-- [x] S1.2.1: Leggere script e documentazione
-- [x] S1.2.2: Salvare context.md
+## Riepilogo modifiche apportate
 
-## M2: Esecuzione conversione
-### T2.1: Input utente | agent:Commander | status:pending
-- [ ] S2.1.1: Chiedere all'utente la directory con gli MKV
-- [ ] S2.1.2: Verificare che la directory contenga file .mkv
+### v1.0 → v1.1 (modifiche cumulative)
+- [x] **Progress bar live** — stderr letto in binario, split su `\r` (ffmpeg usa carriage return, non newline)
+- [x] **ffprobe timeout**: 60s → 120s (per REMUX via SMB)
+- [x] **Supporto MP4 → MKV** — input `.mp4` convertiti in `.mkv`, video stream copy, estensione output `.mkv`
+- [x] **Flag `--inplace`** — rinomina originale in `OLD_<nome>`, scrive convertito con nome originale
+- [x] **Error recovery** — se conversione fallisce in inplace, ripristina backup
+- [x] **Collision detection** — se `OLD_<nome>` esiste già, skip
 
-### T2.2: Conversione | agent:Worker | status:pending | depends:T2.1
-- [ ] S2.2.1: Eseguire mk-downmix.py sulla directory indicata
-- [ ] S2.2.2: Verificare output file generati
+### Test effettuati
+- [x] Test 7.1 ITA + stereo ENG → downmix OK, stereo copy OK
+- [x] Test FLAC 7.1 → AC3 5.1 640k (funziona)
+- [x] Test American Psycho (55GB, SMB) → completato in 17 min
+- [x] Test MP4→MKV con `--inplace` → OK
+- [x] Test progress bar su file 3.2GB → OK (aggiornamenti ogni ~1%)
+- [x] Test collision detection OLD_ → OK (skip se backup esiste)
 
-### T2.3: Verifica finale | agent:Reviewer | status:pending | depends:T2.2
-- [ ] S2.3.1: Verificare tracce audio nei file output
-- [ ] S2.3.2: Confermare conversione completata
+### Comando per l'utente
+```bash
+python3 mkv-downmix.py "/Volumes/Film/Film/" --inplace
+```

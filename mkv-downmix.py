@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-MKV → Z906 Converter  v1.0
-============================
+mkv-downmix  v1.0
+==================
 Converte tracce audio 7.1 / DTS-HD / TrueHD / Atmos in AC3 5.1 640kbps
 compatibile con Logitech Z906 collegato via cavo ottico (TOSLINK) alla TV.
 
 Il video NON viene toccato (stream copy) — zero rischi di corruzione.
 
 Utilizzo:
-    python3 mkv2z906.py ~/Downloads/TORRENT/        # tutta una cartella
-    python3 mkv2z906.py film.mkv                     # file singolo
-    python3 mkv2z906.py . --output ~/Movies/Z906/    # output personalizzato
-    python3 mkv2z906.py . --upmix-stereo             # upmix 2.0 → 5.1
-    python3 mkv2z906.py . --dry-run                  # mostra comandi senza eseguire
+    python3 mkv-downmix.py ~/Downloads/TORRENT/        # tutta una cartella
+    python3 mkv-downmix.py film.mkv                     # file singolo
+    python3 mkv-downmix.py . --output ~/Movies/Z906/    # output personalizzato
+    python3 mkv-downmix.py . --upmix-stereo             # upmix 2.0 → 5.1
+    python3 mkv-downmix.py . --dry-run                  # mostra comandi senza eseguire
 """
 
 import subprocess, json, os, sys, argparse, shutil, textwrap
@@ -287,7 +287,7 @@ def process_file(filepath, output_dir, upmix, dry_run):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog='mkv2z906',
+        prog='mkv-downmix',
         description=textwrap.dedent("""\
             Converti tracce audio MKV per Logitech Z906 (cavo ottico).
             Il video viene copiato SENZA ricodifica — qualità originale preservata.""",

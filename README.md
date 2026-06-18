@@ -1,4 +1,4 @@
-# mkv2z906
+# mkv-downmix
 
 Converte tracce audio **7.1 / Atmos / TrueHD / DTS-HD / DTS:X** da file MKV in **AC3 5.1 640 kbps** compatibile con **Logitech Z906** collegato via **cavo ottico TOSLINK** alla TV.
 
@@ -34,13 +34,13 @@ ffmpeg -encoders | grep ac3    # deve mostrare l'encoder AC3
 ## Utilizzo
 
 ```bash
-python3 mkv2z906.py ~/Downloads/TORRENT/
+python3 mkv-downmix.py ~/Downloads/TORRENT/
 
 # Opzioni
-python3 mkv2z906.py film.mkv                          # file singolo
-python3 mkv2z906.py . -o ~/Movies/Z906/                # output personalizzato
-python3 mkv2z906.py . --upmix-stereo                    # upmix 2.0 → 5.1
-python3 mkv2z906.py . --dry-run                         # mostra comandi senza eseguire
+python3 mkv-downmix.py film.mkv                          # file singolo
+python3 mkv-downmix.py . -o ~/Movies/Z906/                # output personalizzato
+python3 mkv-downmix.py . --upmix-stereo                    # upmix 2.0 → 5.1
+python3 mkv-downmix.py . --dry-run                         # mostra comandi senza eseguire
 ```
 
 ## Cosa fa
@@ -83,8 +83,8 @@ ffmpeg -y \
   -c:v libx264 -c:a copy test-7.1.mkv
 
 # Converti
-python3 mkv2z906.py test-7.1.mkv --dry-run
-python3 mkv2z906.py test-7.1.mkv
+python3 mkv-downmix.py test-7.1.mkv --dry-run
+python3 mkv-downmix.py test-7.1.mkv
 
 # Verifica
 ffprobe Z906-ready/test-7.1.mkv

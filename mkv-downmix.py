@@ -15,7 +15,7 @@ Utilizzo:
     python3 mkv-downmix.py . --dry-run                  # mostra comandi senza eseguire
 """
 
-import subprocess, json, os, sys, argparse, shutil, textwrap, threading
+import subprocess, json, os, sys, argparse, shutil, textwrap
 from pathlib import Path
 
 # Lingue da mantenere (sia ISO 639-1 che ISO 639-2)
@@ -30,15 +30,15 @@ def fmt_time(seconds):
     return f"{h:02d}:{m:02d}:{s:04.1f}"
 
 
+def to_mkv(path):
+    """Forza estensione .mkv (utile per input .mp4)."""
+    return path.with_suffix('.mkv')
+
+
 def run_ffmpeg(cmd, total_dur):
-    """Esegue ffmpeg con barra di progresso live.
+    """Esegue ffmpeg con barra di progresso live (senza threading).
 
-    Args:
-        cmd: Lista argomenti ffmpeg
-        total_dur: Durata totale in secondi (0 = nessuna progress bar)
-
-    Returns:
-        subprocess.CompletedProcess
+    Legge stderr riga per riga in modo bloccante — più affidabile.
     """
     proc = subprocess.Popen(
         cmd,
@@ -49,40 +49,31 @@ def run_ffmpeg(cmd, total_dur):
 
     stderr_lines = []
     last_pct = -1
-    done = threading.Event()
 
-    def reader():
-        nonlocal last_pct
-        for line in iter(proc.stderr.readline, ''):
-            stderr_lines.append(line)
-            if line.startswith('time=') and total_dur > 0:
-                raw = line[5:].strip().split()[0]
-                try:
-                    h, m, s = raw.split(':')
-                    cur = int(h) * 3600 + int(m) * 60 + float(s)
-                    pct = min(cur / total_dur * 100, 100)
-                    if int(pct) != last_pct:
-                        bar_len = 20
-                        filled = int(pct / 100 * bar_len)
-                        bar = '█' * filled + '░' * (bar_len - filled)
-                        print(
-                            f"\r    [{bar}] {pct:.0f}%  "
-                            f"({fmt_time(cur)} / {fmt_time(total_dur)})",
-                            end='', file=sys.stderr,
-                        )
-                        sys.stderr.flush()
-                        last_pct = pct
-                except (ValueError, IndexError):
-                    pass
-        done.set()
+    for line in iter(proc.stderr.readline, ''):
+        stderr_lines.append(line)
+        if line.startswith('time=') and total_dur > 0:
+            raw = line[5:].strip().split()[0]
+            try:
+                h, m, s = raw.split(':')
+                cur = int(h) * 3600 + int(m) * 60 + float(s)
+                pct = min(cur / total_dur * 100, 100)
+                if int(pct) != last_pct:
+                    bar_len = 20
+                    filled = int(pct / 100 * bar_len)
+                    bar = '█' * filled + '░' * (bar_len - filled)
+                    print(
+                        f"\r    [{bar}] {pct:.0f}%  "
+                        f"({fmt_time(cur)} / {fmt_time(total_dur)})",
+                        end='', file=sys.stderr,
+                    )
+                    sys.stderr.flush()
+                    last_pct = pct
+            except (ValueError, IndexError):
+                pass
 
-    t = threading.Thread(target=reader, daemon=True)
-    t.start()
-
+    # ffmpeg terminato, chiude stderr e legge stdout residuo
     proc.wait()
-    done.wait(timeout=3)
-
-    stderr_output = ''.join(stderr_lines)
     print(file=sys.stderr)  # nuova riga dopo la barra
 
     stdout_output = ''
@@ -94,7 +85,7 @@ def run_ffmpeg(cmd, total_dur):
         args=cmd,
         returncode=proc.returncode,
         stdout=stdout_output,
-        stderr=stderr_output,
+        stderr=''.join(stderr_lines),
     )
 
 
@@ -107,7 +98,7 @@ def probe(filepath):
     r = subprocess.run(
         ['ffprobe', '-v', 'quiet', '-print_format', 'json',
          '-show_streams', '-show_format', str(filepath)],
-        capture_output=True, text=True, timeout=60
+        capture_output=True, text=True, timeout=120
     )
     return json.loads(r.stdout)
 
@@ -299,7 +290,7 @@ def process_file(filepath, output_dir, upmix, dry_run, inplace=False):
     if inplace:
         # ── Modalità "in-place": l'output sostituisce l'originale ──
         backup_path = filepath.with_name(f"OLD_{filepath.name}")
-        output_file = filepath  # il nuovo file prende il nome originale
+        output_file = to_mkv(filepath)  # .mp4 → .mkv, .mkv resta .mkv
 
         if backup_path.exists() and not dry_run:
             print(f"\n  ⚠️  Backup già esistente: {backup_path.name}")
@@ -316,7 +307,7 @@ def process_file(filepath, output_dir, upmix, dry_run, inplace=False):
     else:
         # ── Modalità standard: output separato ──
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / filepath.name
+        output_file = to_mkv(output_dir / filepath.name)  # .mp4 → .mkv
         input_for_ffmpeg = filepath
 
         if output_file.exists() and not dry_run:
@@ -412,7 +403,7 @@ def main():
               Lo Z906 mostrerà "3D Dolby Digital" ✓
         """),
     )
-    parser.add_argument('input', help='File MKV o directory contenente MKV')
+    parser.add_argument('input', help='File MKV/MP4 o directory contenente MKV/MP4')
     parser.add_argument('-o', '--output', default=None,
                         help='Directory output (default: ./Z906-ready/ vicino all\'input)')
     parser.add_argument('--upmix-stereo', action='store_true',
@@ -453,11 +444,11 @@ def main():
         files = [input_path]
     else:
         files = sorted(input_path.glob('*.mkv'))
-        # supporta anche .mka (audio-only) se presenti
         files += sorted(f for f in input_path.glob('*.mka') if f not in files)
+        files += sorted(f for f in input_path.glob('*.mp4') if f not in files)
 
     if not files:
-        print(f"❌ Nessun file MKV/MKA trovato in: {input_path}")
+        print(f"❌ Nessun file MKV/MKA/MP4 trovato in: {input_path}")
         sys.exit(1)
 
     # ── Config ──

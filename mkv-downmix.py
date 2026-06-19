@@ -138,6 +138,8 @@ def classify_streams(data):
 
     for s in streams:
         t = s['codec_type']
+        if t == 'video' and s.get('disposition', {}).get('attached_pic'):
+            continue
         lang = norm_lang(s.get('tags', {}).get('language', ''))
         entry = {
             'index': s['index'],
@@ -523,8 +525,6 @@ def process_file(entry, output_dir, upmix, dry_run, inplace):
     """Elabora un singolo file MKV/MP4 (già pre-scansionato)."""
     filepath = entry['file']
     total_dur = entry['duration']
-    expected_audio = entry['audio_count']
-    expected_video = entry['video_count']
 
     print(f"\n{'─'*60}")
     print(f"📦  {filepath.name}")
@@ -547,6 +547,8 @@ def process_file(entry, output_dir, upmix, dry_run, inplace):
         return False
 
     video, audio, subs, info = classify_streams(data)
+    expected_audio = len(audio)
+    expected_video = 1 if video else 0
 
     if info['fallback_used']:
         print("  ⚠️  Nessuna traccia ITA/ENG — mantengo TUTTE le tracce audio")

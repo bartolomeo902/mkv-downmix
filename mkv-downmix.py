@@ -198,7 +198,7 @@ def describe_track(t):
 def build_command(input_file, output_file, video, audio, subs, upmix):
     """Costruisce il comando ffmpeg con tutte le opzioni per-stream."""
     cmd = [
-        'ffmpeg', '-i', str(input_file), '-y',
+        'ffmpeg', '-i', str(input_file), '-y', '-stats',
         '-map_metadata', '0',              # copia metadati globali + stream (auto)
     ]
 

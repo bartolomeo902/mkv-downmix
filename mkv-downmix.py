@@ -323,29 +323,11 @@ def build_command(input_file, output_file, video, audio, subs, upmix):
     for a in audio:
         cmd += ['-map', f'0:{a["index"]}']
         ch = a['channels']
+        codec = a['codec']
 
-        if ch >= 7:
-            print(f"    🔄 [{ao}] {describe_track(a)} → AC3 5.1 640k (downmix 7.1→5.1)")
-            cmd += [
-                f'-c:a:{ao}', 'ac3',
-                f'-b:a:{ao}', '640k',
-                f'-ac:a:{ao}', '6',
-            ]
-        elif ch == 6:
-            # Già 5.1 ma in formato non-AC3 (DTS, FLAC, ecc)
-            if a['codec'] == 'ac3':
-                print(f"    ✅ [{ao}] {describe_track(a)} copiato (già AC3 5.1)")
-                cmd += [f'-c:a:{ao}', 'copy']
-            else:
-                print(f"    🔄 [{ao}] {describe_track(a)} → AC3 640k")
-                cmd += [
-                    f'-c:a:{ao}', 'ac3',
-                    f'-b:a:{ao}', '640k',
-                    f'-ac:a:{ao}', '6',
-                ]
-        elif 0 < ch <= 2:
+        if 0 < ch <= 2:
             if upmix:
-                print(f"    🔄 [{ao}] {describe_track(a)} → AC3 5.1 640k (upmix stereo→surround)")
+                print(f"    🔄 [{ao}] {describe_track(a)} → AC3 5.1 640k (upmix → surround)")
                 cmd += [
                     f'-c:a:{ao}', 'ac3',
                     f'-b:a:{ao}', '640k',
@@ -355,9 +337,16 @@ def build_command(input_file, output_file, video, audio, subs, upmix):
             else:
                 print(f"    ✅ [{ao}] {describe_track(a)} copiato (Z906 → Pro Logic II)")
                 cmd += [f'-c:a:{ao}', 'copy']
-        else:
-            print(f"    ✅ [{ao}] {describe_track(a)} copiato")
+        elif codec == 'ac3' and ch <= 6:
+            print(f"    ✅ [{ao}] {describe_track(a)} copiato (già AC3)")
             cmd += [f'-c:a:{ao}', 'copy']
+        else:
+            print(f"    🔄 [{ao}] {describe_track(a)} → AC3 5.1 640k")
+            cmd += [
+                f'-c:a:{ao}', 'ac3',
+                f'-b:a:{ao}', '640k',
+                f'-ac:a:{ao}', '6',
+            ]
 
         ao += 1
 

@@ -57,6 +57,8 @@ DISK_SAFETY_FACTOR = 1.2
 # Tolleranza durata in verifica output (1% di scarto accettato)
 DURATION_TOLERANCE = 0.99
 
+CHANNEL_LAYOUTS = {1: '1.0', 2: '2.0', 6: '5.1', 8: '7.1'}
+
 
 # ─────────────────────────────────────────────
 # UTILITY
@@ -181,7 +183,12 @@ def classify_streams(data):
 def describe_track(t):
     """Descrizione leggibile di una traccia audio."""
     ch = t['channels']
-    suffix = f"{ch}.{max(0, ch-1)}" if ch > 0 else "?"
+    if ch in CHANNEL_LAYOUTS:
+        suffix = CHANNEL_LAYOUTS[ch]
+    elif ch > 0:
+        suffix = f'{ch}ch'
+    else:
+        suffix = '?'
     codec = t['codec'].upper()
     lang = t['language'].upper()
     layout = t['channel_layout']

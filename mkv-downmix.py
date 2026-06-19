@@ -352,14 +352,20 @@ def build_command(input_file, output_file, video, audio, subs, upmix):
 
         ao += 1
 
+    so = 0
     for s in subs:
         lang_label = s['language'].upper()
         codec = s['codec']
         cmd += ['-map', f'0:{s["index"]}']
-        print(f"    ✅ Sottotitoli {lang_label} ({codec}) mantenuti")
-
-    if subs:
-        cmd += ['-c:s', 'copy']
+        if codec == 'mov_text':
+            # mov_text è MP4-only e NON supportato da Matroska.
+            # Conversione → srt (puro testo, lossless del contenuto).
+            print(f"    🔄 Sottotitoli {lang_label} ({codec}) → SRT (compat Matroska)")
+            cmd += [f'-c:s:{so}', 'srt']
+        else:
+            print(f"    ✅ Sottotitoli {lang_label} ({codec}) mantenuti")
+            cmd += [f'-c:s:{so}', 'copy']
+        so += 1
 
     cmd.append(str(output_file))
     return cmd

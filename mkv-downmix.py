@@ -412,13 +412,38 @@ def verify_output(output_file, expected_duration, expected_audio, expected_video
 # 6. SPAZIO DISCO
 # ─────────────────────────────────────────────
 
+def _free_space(target_dir):
+    """Spazio libero in byte sul filesystem di target_dir.
+
+    Su macOS, i mount SMB riportano valori incoerenti via statvfs/shutil
+    (f_blocks * f_frsize sottostima drammaticamente lo spazio reale —
+    es. NAS da 12 TiB liberi visto come 20 GiB).
+    Usa `df -P -k` (POSIX, affidabile) come fonte primaria; ricade su
+    shutil.disk_usage() solo se df fallisce.
+    """
+    try:
+        r = subprocess.run(
+            ['df', '-P', '-k', str(target_dir)],
+            capture_output=True, text=True, timeout=10, check=True,
+        )
+        lines = [l for l in r.stdout.strip().split('\n') if l.strip()]
+        if len(lines) >= 2:
+            # POSIX df: campo 3 (0-indexed) = "Available" in blocchi da 1024 byte
+            fields = lines[-1].split()
+            return int(fields[3]) * 1024
+    except (subprocess.SubprocessError, ValueError, IndexError, OSError):
+        pass
+    # Fallback (filesystem locale, o df assente)
+    return shutil.disk_usage(target_dir).free
+
+
 def check_disk_space(target_dir, source_size):
     """Verifica spazio libero sufficiente per la conversione.
     target_dir = directory dove andrà l'output.
     source_size = dimensione del file sorgente in byte.
     """
     try:
-        free = shutil.disk_usage(target_dir).free
+        free = _free_space(target_dir)
     except OSError as e:
         return True, f"impossibile verificare ({e})"  # non blocca, solo warning
 
